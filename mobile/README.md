@@ -2,13 +2,14 @@
 
 Expo React Native prototype for Android, portrait orientation.
 
-## Slice 1 loop
+## Loop
 
+- Pick 3 gears before a run. Cog stays pinned in the shop. Clear even waves to unlock the rest of the 8-gear kit.
 - Fixed spinner. Gears only work when a chain touches it. Powered gears spin; dead gears sit still.
-- Pinned Cog in the shop plus three unit cards. Merge same type + same rank (1 to 2 to 4).
-- Drag to move or merge. Tap a placed gear, then sell for a partial refund.
-- Cheap units spawn fast. Costly units spawn slower and hit harder.
-- Combat is walking lane units, not a hidden formula. Five waves with different jobs: rush, archers, tank+swarm, freezer slow, mixed boss.
+- Merge same type + same rank (1 to 2 to 4). Drag to move or merge. Tap a placed gear, then sell.
+- Cheap units spawn fast. Costly units spawn slower and hit harder. Bolt is a line shot with no bodies. Mender heals its lane.
+- Later jobs lock sockets. Grab the mid-lane crate for a short overdrive.
+- Ten waves with different jobs. Fail text names the mistake: empty lane, all-spell board, no tank.
 - Android package id: `com.gearforge.prototype`.
 
 ## Run locally with Expo

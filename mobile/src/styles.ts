@@ -117,6 +117,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 3,
     borderColor: '#132a8f',
+    overflow: 'visible',
   },
   nutsLabel: {
     color: '#ffdd31',
@@ -127,6 +128,14 @@ export const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '900',
     fontSize: 16,
+  },
+  payoutText: {
+    position: 'absolute',
+    top: -14,
+    right: 4,
+    color: '#ffdf35',
+    fontWeight: '900',
+    fontSize: 14,
   },
   machineReadout: {
     alignSelf: 'center',
@@ -165,6 +174,15 @@ export const styles = StyleSheet.create({
   coreSocket: {
     backgroundColor: '#eed8a3',
     borderColor: '#ffffff',
+  },
+  lockedSocket: {
+    backgroundColor: 'rgba(42, 28, 22, 0.72)',
+    borderColor: '#5a3a2a',
+  },
+  lockMark: {
+    color: '#d7b49a',
+    fontSize: 9,
+    fontWeight: '900',
   },
   coreText: {
     color: '#3a260b',
@@ -272,12 +290,65 @@ export const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: '#ffe36a',
   },
+  boltShot: {
+    position: 'absolute',
+    zIndex: 3,
+    width: 16,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ff9a3c',
+  },
+  crate: {
+    position: 'absolute',
+    zIndex: 3,
+    width: 26,
+    height: 26,
+    marginLeft: -13,
+    borderRadius: 6,
+    borderWidth: 3,
+    borderColor: '#7a4a00',
+    backgroundColor: '#ffb02e',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  crateMark: {
+    color: '#3a260b',
+    fontSize: 10,
+    fontWeight: '900',
+  },
   floatText: {
     position: 'absolute',
     zIndex: 4,
     color: '#fff4c8',
     fontWeight: '900',
     fontSize: 12,
+  },
+  healText: {
+    color: '#9dffb0',
+  },
+  loadoutCopy: {
+    color: '#d6edff',
+    fontWeight: '800',
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  kitGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  kitCard: {
+    width: '23%',
+    flexGrow: 1,
+    alignItems: 'center',
+    padding: 7,
+    borderWidth: 4,
+    borderRadius: 14,
+    backgroundColor: '#46b6f2',
+  },
+  kitLocked: {
+    opacity: 0.45,
   },
   shopPanel: {
     marginTop: 10,
