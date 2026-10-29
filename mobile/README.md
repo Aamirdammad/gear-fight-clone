@@ -20,7 +20,7 @@ npm install
 npm start
 ```
 
-`npm install` restores the placeholder PNG icons from `scripts/assets.json`.
+`npm install` generates the placeholder PNG icons.
 
 Open the QR code in Expo Go on Android, or run:
 
