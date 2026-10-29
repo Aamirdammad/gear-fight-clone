@@ -2,15 +2,14 @@
 
 Expo React Native prototype for Android, portrait orientation.
 
-## Current scope
+## Slice 1 loop
 
-- Portrait-only mobile layout inspired by the provided cartoon gear-combat references.
-- Placeholder-only visuals: colored gears, simple units, sky/island background shapes, and chunky UI panels.
-- 4x5 gear board with a fixed power core.
-- Bottom shop with three cards, reroll, gear placement, and tap-to-upgrade.
-- Five-wave combat loop with simple lane simulation.
+- Fixed spinner. Gears only work when a chain touches it. Powered gears spin; dead gears sit still.
+- Pinned Cog in the shop plus three unit cards. Merge same type + same rank (1 to 2 to 4).
+- Drag to move or merge. Tap a placed gear, then sell for a partial refund.
+- Cheap units spawn fast. Costly units spawn slower and hit harder.
+- Combat is walking lane units, not a hidden formula. Five waves with different jobs: rush, archers, tank+swarm, freezer slow, mixed boss.
 - Android package id: `com.gearforge.prototype`.
-- EAS preview profile configured to output a test APK.
 
 ## Run locally with Expo
 
@@ -22,27 +21,16 @@ npm start
 
 `npm install` generates the placeholder PNG icons.
 
-Open the QR code in Expo Go on Android, or run:
-
-```bash
-npm run android
-```
-
-`npm run android` requires Android tooling/emulator support on the machine.
-
-## Type check
+## Type check and combat smoke
 
 ```bash
 npm run typecheck
+npx --yes tsx scripts/smoke-sim.ts
 ```
 
 ## Build a test APK
 
-This repository is ready for an EAS cloud APK build:
-
 ```bash
 cd mobile
-npx eas-cli build --platform android --profile preview
+npx eas-cli build --platform android --profile preview --non-interactive
 ```
-
-That command requires Expo/EAS authentication. The current cloud machine does not have Android SDK tooling, so EAS cloud build is the practical path for producing the APK from this environment.
