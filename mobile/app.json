@@ -21,6 +21,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "2aead49a-3c5d-4088-9683-5511ca3e31bc"
+      }
+    },
+    "owner": "aamirdammads-team"
   }
 }
