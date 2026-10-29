@@ -1,333 +1,377 @@
 import { StatusBar } from 'expo-status-bar'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react'
 import {
+  Animated,
+  Easing,
+  PanResponder,
   Pressable,
   SafeAreaView,
   ScrollView,
   Text,
   useWindowDimensions,
   View,
+  type GestureResponderEvent,
 } from 'react-native'
+import {
+  COLS,
+  MAX_WAVES,
+  ROWS,
+  emptyGrid,
+  gearBook,
+  isCore,
+  rollUnitShop,
+  sellValue,
+  waves,
+  type Gear,
+  type GearId,
+} from './src/catalog'
+import {
+  createBattle,
+  failHint,
+  inspectMachine,
+  mergeGears,
+  placeGear,
+  tickBattle,
+  type BattleState,
+} from './src/sim'
 import { styles } from './src/styles'
 
-type GearId = 'scout' | 'rogue' | 'spark' | 'guard' | 'booster'
 type Phase = 'planning' | 'battle' | 'result' | 'victory' | 'defeat'
+type ShopPick = { kind: 'cog' } | { kind: 'unit'; index: number }
 
-type Gear = {
-  id: GearId
-  level: number
-}
+const DT = 0.05
+const BOARD_GAP = 9
 
-type Lane = {
-  power: number
-  control: number
-  labels: string[]
-}
+const SpinningGear = ({
+  spinning,
+  speed,
+  color,
+  size,
+  mark,
+}: {
+  spinning: boolean
+  speed: number
+  color: string
+  size: number
+  mark: string
+}) => {
+  const rot = useRef(new Animated.Value(0)).current
 
-type Battle = {
-  won: boolean
-  damage: number
-  remaining: number[]
-  startHp: number[]
-}
+  useEffect(() => {
+    rot.setValue(0)
+    if (!spinning) return undefined
+    const duration = Math.max(280, 1600 / Math.max(0.35, speed))
+    const loop = Animated.loop(
+      Animated.timing(rot, {
+        toValue: 1,
+        duration,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [rot, spinning, speed])
 
-const ROWS = 4
-const COLS = 5
-const CORE = { row: 1, col: 2 }
-const MAX_WAVES = 5
+  const rotate = rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
+  const tooth = Math.max(5, size * 0.14)
 
-const gearBook: Record<
-  GearId,
-  {
-    title: string
-    mark: string
-    cost: number
-    power: number
-    color: string
-    detail: string
-  }
-> = {
-  scout: {
-    title: 'Scout',
-    mark: 'S',
-    cost: 6,
-    power: 11,
-    color: '#35d75f',
-    detail: 'Fast spear unit',
-  },
-  rogue: {
-    title: 'Rogue',
-    mark: 'R',
-    cost: 8,
-    power: 15,
-    color: '#ff4ea3',
-    detail: 'Crit attacker',
-  },
-  spark: {
-    title: 'Spark',
-    mark: 'Z',
-    cost: 10,
-    power: 18,
-    color: '#ffd456',
-    detail: 'Burst gear',
-  },
-  guard: {
-    title: 'Guard',
-    mark: 'G',
-    cost: 7,
-    power: 10,
-    color: '#4ed2ff',
-    detail: 'Slows leaks',
-  },
-  booster: {
-    title: 'Boost',
-    mark: 'x2',
-    cost: 9,
-    power: 0,
-    color: '#f4d6a0',
-    detail: 'Buffs adjacent',
-  },
-}
-
-const waves = [
-  { name: 'Meadow Run', hp: [26, 34, 26], reward: 14 },
-  { name: 'Wolf Pack', hp: [42, 36, 44], reward: 16 },
-  { name: 'Sky Raiders', hp: [58, 48, 58], reward: 19 },
-  { name: 'Bridge Clash', hp: [72, 82, 70], reward: 23 },
-  { name: 'Nimbus Boss', hp: [92, 118, 92], reward: 35 },
-]
-
-const emptyGrid = () =>
-  Array.from({ length: ROWS }, () => Array.from<Gear | null>({ length: COLS }).fill(null))
-
-const gearIds = Object.keys(gearBook) as GearId[]
-
-const rollShop = () => Array.from({ length: 3 }, () => gearIds[Math.floor(Math.random() * gearIds.length)])
-
-const isCore = (row: number, col: number) => row === CORE.row && col === CORE.col
-
-const neighbors = (row: number, col: number) =>
-  [
-    [row - 1, col],
-    [row + 1, col],
-    [row, col - 1],
-    [row, col + 1],
-  ].filter(([nextRow, nextCol]) => nextRow >= 0 && nextRow < ROWS && nextCol >= 0 && nextCol < COLS)
-
-const laneForRow = (row: number) => Math.min(2, Math.floor((row * 3) / ROWS))
-
-const upgradeCost = (gear: Gear) => Math.ceil(gearBook[gear.id].cost * (0.8 + gear.level * 0.6))
-
-const getPowered = (grid: (Gear | null)[][]) => {
-  const powered = new Set<string>()
-  const visited = new Set<string>([`${CORE.row}-${CORE.col}`])
-  const queue: Array<[number, number]> = [[CORE.row, CORE.col]]
-
-  while (queue.length) {
-    const [row, col] = queue.shift()!
-    for (const [nextRow, nextCol] of neighbors(row, col)) {
-      const key = `${nextRow}-${nextCol}`
-      if (visited.has(key) || !grid[nextRow][nextCol]) continue
-      visited.add(key)
-      powered.add(key)
-      queue.push([nextRow, nextCol])
-    }
-  }
-
-  return powered
-}
-
-const boosterFor = (grid: (Gear | null)[][], powered: Set<string>, row: number, col: number) =>
-  neighbors(row, col).reduce((boost, [nextRow, nextCol]) => {
-    const gear = grid[nextRow][nextCol]
-    if (!gear || gear.id !== 'booster' || !powered.has(`${nextRow}-${nextCol}`)) return boost
-    return boost + 0.48 * gear.level
-  }, 1)
-
-const buildLanes = (grid: (Gear | null)[][], powered: Set<string>) => {
-  const lanes: Lane[] = Array.from({ length: 3 }, () => ({ power: 0, control: 0, labels: [] }))
-
-  grid.forEach((rowCells, row) => {
-    rowCells.forEach((gear, col) => {
-      if (!gear || gear.id === 'booster' || !powered.has(`${row}-${col}`)) return
-      const lane = laneForRow(row)
-      const data = gearBook[gear.id]
-      const levelScale = 1 + (gear.level - 1) * 0.58
-      const output = data.power * levelScale * boosterFor(grid, powered, row, col)
-
-      lanes[lane].power += output
-      lanes[lane].labels.push(`${data.title} L${gear.level}`)
-      if (gear.id === 'guard') lanes[lane].control += 0.15 * gear.level
-      if (gear.id === 'spark') lanes[lane].power += 3 * gear.level
-    })
-  })
-
-  return lanes
-}
-
-const simulateBattle = (lanes: Lane[], wave: number): Battle => {
-  const startHp = [...waves[wave - 1].hp]
-  const remaining = startHp.map((hp, lane) => {
-    const output = lanes[lane].power * (2.65 + Math.min(0.5, lanes[lane].control))
-    return Math.max(0, hp - output)
-  })
-  const totalRemaining = remaining.reduce((sum, hp) => sum + hp, 0)
-  const won = totalRemaining <= 0
-
-  return {
-    won,
-    damage: won ? 0 : Math.max(1, Math.ceil(totalRemaining / 38)),
-    remaining,
-    startHp,
-  }
+  return (
+    <Animated.View
+      style={[
+        styles.gearFace,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
+          transform: [{ rotate }],
+        },
+      ]}
+    >
+      <View style={[styles.tooth, { top: 2, width: tooth, height: tooth }]} />
+      <View style={[styles.tooth, { bottom: 2, width: tooth, height: tooth }]} />
+      <View style={[styles.tooth, { left: 2, width: tooth, height: tooth }]} />
+      <View style={[styles.tooth, { right: 2, width: tooth, height: tooth }]} />
+      <Text style={styles.gearMark}>{mark}</Text>
+    </Animated.View>
+  )
 }
 
 export default function App() {
   const { width } = useWindowDimensions()
   const [grid, setGrid] = useState<(Gear | null)[][]>(() => emptyGrid())
   const [shop, setShop] = useState<GearId[]>(() => ['scout', 'spark', 'booster'])
-  const [selected, setSelected] = useState<GearId | null>('scout')
-  const [coins, setCoins] = useState(22)
+  const [pick, setPick] = useState<ShopPick | null>({ kind: 'cog' })
+  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
+  const [coins, setCoins] = useState(26)
   const [lives, setLives] = useState(13)
   const [defeated, setDefeated] = useState(0)
   const [wave, setWave] = useState(1)
   const [phase, setPhase] = useState<Phase>('planning')
-  const [notice, setNotice] = useState('Tap a card, place gears near the core, then fight.')
-  const [battle, setBattle] = useState<Battle | null>(null)
-  const [battleTick, setBattleTick] = useState(0)
+  const [notice, setNotice] = useState('Buy a Cog, chain unit gears from the spinner, merge pairs, then fight.')
+  const [battle, setBattle] = useState<BattleState | null>(null)
+  const [drag, setDrag] = useState<{ gear: Gear; x: number; y: number } | null>(null)
 
-  const powered = useMemo(() => getPowered(grid), [grid])
-  const lanes = useMemo(() => buildLanes(grid, powered), [grid, powered])
-  const currentWave = waves[wave - 1]
   const boardSize = Math.min(width - 42, 380)
-  const socketSize = (boardSize - 36) / COLS
-  const battleProgress = phase === 'battle' ? Math.min(1, battleTick / 14) : phase === 'result' ? 1 : 0
-  const displayHp =
-    battle?.startHp.map((hp, index) => Math.max(0, hp - (hp - battle.remaining[index]) * battleProgress)) ??
-    currentWave.hp
+  const socketSize = (boardSize - BOARD_GAP * (COLS - 1)) / COLS
+  const machine = useMemo(() => inspectMachine(grid), [grid])
+  const currentWave = waves[wave - 1]
+  const unitCount = useMemo(
+    () =>
+      grid.reduce(
+        (sum, row, rowIndex) =>
+          sum +
+          row.reduce(
+            (rowSum, gear, col) =>
+              gear && gearBook[gear.id].spawns && machine.powered.has(`${rowIndex}-${col}`) ? rowSum + 1 : rowSum,
+            0,
+          ),
+        0,
+      ),
+    [grid, machine.powered],
+  )
+
+  const boardRef = useRef<ComponentRef<typeof View>>(null)
+  const boardOrigin = useRef({ x: 0, y: 0 })
+  const dragFrom = useRef<{ row: number; col: number; gear: Gear } | null>(null)
+  const moved = useRef(false)
+  const gridRef = useRef(grid)
+  const phaseRef = useRef(phase)
+  const socketSizeRef = useRef(socketSize)
+  const tapCellRef = useRef<(row: number, col: number) => void>(() => undefined)
+  const dropGearRef = useRef<
+    (fromRow: number, fromCol: number, moving: Gear, toRow: number, toCol: number) => void
+  >(() => undefined)
+  gridRef.current = grid
+  phaseRef.current = phase
+  socketSizeRef.current = socketSize
 
   useEffect(() => {
-    if (phase !== 'battle' || !battle) return
+    if (phase !== 'battle' || !battle || battle.won !== null) return undefined
+    const timer = setInterval(() => {
+      setBattle((current) => {
+        if (!current || current.won !== null) return current
+        return tickBattle(current, DT, gridRef.current, inspectMachine(gridRef.current))
+      })
+    }, DT * 1000)
+    return () => clearInterval(timer)
+  }, [battle, phase])
 
-    if (battleTick < 14) {
-      const timer = setTimeout(() => setBattleTick((tick) => tick + 1), 220)
-      return () => clearTimeout(timer)
-    }
-
+  useEffect(() => {
+    if (phase !== 'battle' || !battle || battle.won === null) return undefined
+    const leaks = battle.leaks
+    const kills = battle.kills
+    const won = battle.won
     const timer = setTimeout(() => {
-      if (battle.won) {
-        const reward = currentWave.reward
-        setCoins((value) => value + reward)
-        setDefeated((value) => value + currentWave.hp.length)
-        setNotice(`Wave cleared. +${reward} nuts earned.`)
-        setPhase(wave === MAX_WAVES ? 'victory' : 'result')
-        return
-      }
-
+      setDefeated((value) => value + kills)
       setLives((value) => {
-        const next = Math.max(0, value - battle.damage)
-        setPhase(next <= 0 ? 'defeat' : 'result')
+        const next = Math.max(0, value - leaks)
+        if (next <= 0) {
+          setNotice(failHint(wave, leaks, machine.production, unitCount))
+          setPhase('defeat')
+          return next
+        }
+        if (won) {
+          setCoins((coinsNow) => coinsNow + currentWave.reward)
+          setNotice(`Wave cleared. +${currentWave.reward} nuts. ${leaks ? `${leaks} leaked.` : 'No leaks.'}`)
+          setPhase(wave === MAX_WAVES ? 'victory' : 'result')
+        } else {
+          setNotice(failHint(wave, leaks, machine.production, unitCount))
+          setPhase('result')
+        }
         return next
       })
-      setNotice(`Enemies broke through for ${battle.damage} damage. Upgrade and retry.`)
-    }, 450)
-
+    }, 400)
     return () => clearTimeout(timer)
-  }, [battle, battleTick, currentWave.hp.length, currentWave.reward, phase, wave])
+  }, [battle, currentWave.reward, machine.production, phase, unitCount, wave])
 
-  const placeOrUpgrade = (row: number, col: number) => {
+  const socketFromTouch = (event: GestureResponderEvent) => {
+    const size = socketSizeRef.current
+    const x = event.nativeEvent.pageX - boardOrigin.current.x
+    const y = event.nativeEvent.pageY - boardOrigin.current.y
+    const col = Math.floor(x / (size + BOARD_GAP))
+    const row = Math.floor(y / (size + BOARD_GAP))
+    if (row < 0 || col < 0 || row >= ROWS || col >= COLS) return null
+    return { row, col }
+  }
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => phaseRef.current !== 'battle',
+      onMoveShouldSetPanResponder: (_, gesture) => phaseRef.current !== 'battle' && Math.hypot(gesture.dx, gesture.dy) > 6,
+      onPanResponderGrant: (event) => {
+        if (phaseRef.current === 'battle') return
+        moved.current = false
+        const cell = socketFromTouch(event)
+        if (!cell || isCore(cell.row, cell.col)) {
+          dragFrom.current = null
+          return
+        }
+        const gear = gridRef.current[cell.row][cell.col]
+        dragFrom.current = gear ? { ...cell, gear } : null
+      },
+      onPanResponderMove: (event, gesture) => {
+        if (!dragFrom.current) return
+        if (Math.hypot(gesture.dx, gesture.dy) > 8) moved.current = true
+        const size = socketSizeRef.current
+        setDrag({
+          gear: dragFrom.current.gear,
+          x: event.nativeEvent.pageX - size / 2,
+          y: event.nativeEvent.pageY - size / 2,
+        })
+      },
+      onPanResponderRelease: (event) => {
+        const origin = dragFrom.current
+        const target = socketFromTouch(event)
+        const wasDrag = moved.current
+        setDrag(null)
+        dragFrom.current = null
+        moved.current = false
+        if (!wasDrag && target && !isCore(target.row, target.col)) {
+          tapCellRef.current(target.row, target.col)
+          return
+        }
+        if (!origin) return
+        if (!target || isCore(target.row, target.col)) {
+          setNotice('Drop on an empty socket or a matching rank to merge.')
+          return
+        }
+        dropGearRef.current(origin.row, origin.col, origin.gear, target.row, target.col)
+      },
+      onPanResponderTerminate: () => {
+        setDrag(null)
+        dragFrom.current = null
+      },
+    }),
+  ).current
+
+  const chosenId = pick?.kind === 'cog' ? 'cog' : pick ? shop[pick.index] : null
+
+  const tapCell = (row: number, col: number) => {
     if (phase === 'battle' || isCore(row, col)) return
     const existing = grid[row][col]
-
     if (existing) {
-      const cost = upgradeCost(existing)
-      if (coins < cost) {
-        setNotice(`Need ${cost} nuts to upgrade ${gearBook[existing.id].title}.`)
-        return
-      }
-      setGrid((current) =>
-        current.map((gridRow, rowIndex) =>
-          gridRow.map((gear, colIndex) =>
-            rowIndex === row && colIndex === col && gear ? { ...gear, level: gear.level + 1 } : gear,
-          ),
-        ),
-      )
-      setCoins((value) => value - cost)
-      setNotice(`${gearBook[existing.id].title} upgraded to level ${existing.level + 1}.`)
+      setSelectedCell({ row, col })
+      setPick(null)
+      setNotice(`${gearBook[existing.id].title} r${existing.rank}. Drag to move/merge, or sell.`)
       return
     }
-
-    if (!selected) {
-      setNotice('Select a gear card before placing.')
+    if (!chosenId) {
+      setSelectedCell(null)
+      setNotice('Select a shop card, then tap an empty socket.')
       return
     }
-
-    const data = gearBook[selected]
+    const data = gearBook[chosenId]
     if (coins < data.cost) {
       setNotice(`Need ${data.cost} nuts for ${data.title}.`)
       return
     }
-
-    setGrid((current) =>
-      current.map((gridRow, rowIndex) =>
-        gridRow.map((gear, colIndex) => (rowIndex === row && colIndex === col ? { id: selected, level: 1 } : gear)),
-      ),
-    )
+    setGrid((current) => placeGear(current, row, col, { id: chosenId, rank: 1 }))
     setCoins((value) => value - data.cost)
-    setNotice(`${data.title} placed. Powered gears glow green.`)
+    setSelectedCell({ row, col })
+    setNotice(
+      chosenId === 'cog'
+        ? 'Cog placed. Merge two Cogs of the same rank to spin faster.'
+        : `${data.title} placed. It only works if a chain reaches the spinner.`,
+    )
+  }
+
+  const dropGear = (fromRow: number, fromCol: number, moving: Gear, toRow: number, toCol: number) => {
+    if (fromRow === toRow && fromCol === toCol) return
+    const target = grid[toRow][toCol]
+    if (!target) {
+      setGrid((current) => placeGear(placeGear(current, fromRow, fromCol, null), toRow, toCol, moving))
+      setSelectedCell({ row: toRow, col: toCol })
+      setNotice('Moved. Keep the chain touching the spinner.')
+      return
+    }
+    const merged = mergeGears(moving, target)
+    if (merged) {
+      setGrid((current) => placeGear(placeGear(current, fromRow, fromCol, null), toRow, toCol, merged))
+      setSelectedCell({ row: toRow, col: toCol })
+      setNotice(`${gearBook[merged.id].title} merged to rank ${merged.rank}.`)
+      return
+    }
+    setGrid((current) => placeGear(placeGear(current, fromRow, fromCol, target), toRow, toCol, moving))
+    setSelectedCell({ row: toRow, col: toCol })
+    setNotice('Swapped. Same rank + same type merge into a stronger gear.')
+  }
+
+  tapCellRef.current = tapCell
+  dropGearRef.current = dropGear
+
+  const sellSelected = () => {
+    if (!selectedCell || phase === 'battle') return
+    const gear = grid[selectedCell.row][selectedCell.col]
+    if (!gear) return
+    const value = sellValue(gear)
+    setGrid((current) => placeGear(current, selectedCell.row, selectedCell.col, null))
+    setCoins((valueNow) => valueNow + value)
+    setSelectedCell(null)
+    setNotice(`Sold ${gearBook[gear.id].title} for ${value} nuts.`)
   }
 
   const reroll = () => {
     if (phase === 'battle') return
     if (coins < 5) {
-      setNotice('Need 5 nuts to refresh the shop.')
+      setNotice('Need 5 nuts to refresh unit cards.')
       return
     }
     setCoins((value) => value - 5)
-    setShop(rollShop())
-    setSelected(null)
-    setNotice('New cards drawn.')
+    setShop(rollUnitShop())
+    setPick({ kind: 'cog' })
+    setNotice('New unit cards. Cog stays pinned.')
   }
 
   const fight = () => {
     if (phase === 'battle') return
-    if (!lanes.some((lane) => lane.power > 0)) {
-      setNotice('Place at least one powered attack gear before fighting.')
+    if (unitCount === 0) {
+      setNotice('Connect at least one unit gear to the spinner before fighting.')
       return
     }
-    const result = simulateBattle(lanes, wave)
-    setBattle(result)
-    setBattleTick(0)
+    setSelectedCell(null)
+    setPick(null)
+    setBattle(createBattle(wave))
     setPhase('battle')
-    setNotice('Gears are spinning. Watch the lanes resolve.')
+    setNotice('Spinner live. Units walk the lanes. Watch leaks on the left.')
   }
 
   const continueRun = () => {
     if (!battle) return
     if (battle.won && wave < MAX_WAVES) {
       setWave((value) => value + 1)
-      setShop(rollShop())
-      setSelected(null)
+      setShop(rollUnitShop())
+      setPick({ kind: 'cog' })
     }
     setBattle(null)
-    setBattleTick(0)
     setPhase('planning')
-    setNotice('Tune the board for the next wave.')
+    setNotice(battle.won ? 'Tune the machine for the next job.' : 'Rebuild, then retry this wave.')
   }
 
   const reset = () => {
     setGrid(emptyGrid())
     setShop(['scout', 'spark', 'booster'])
-    setSelected('scout')
-    setCoins(22)
+    setPick({ kind: 'cog' })
+    setSelectedCell(null)
+    setCoins(26)
     setLives(13)
     setDefeated(0)
     setWave(1)
     setPhase('planning')
-    setNotice('New run. Build a chain from the core.')
+    setNotice('New run. Cog + chain + merge, then fight.')
     setBattle(null)
-    setBattleTick(0)
   }
+
+  const onBoardLayout = () => {
+    boardRef.current?.measureInWindow((x: number, y: number) => {
+      boardOrigin.current = { x, y }
+    })
+  }
+
+  const selectedGear = selectedCell ? grid[selectedCell.row][selectedCell.col] : null
+  const frost = battle?.slow ?? 1
+  const spinSpeed = phase === 'battle' ? machine.spin * frost : Math.max(0.45, machine.spin * 0.35)
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -339,10 +383,14 @@ export default function App() {
         <View style={[styles.island, styles.islandTwo]} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.screen} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.screen}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={!drag}
+      >
         <View style={styles.topHud}>
           <Pressable onPress={reset} style={styles.iconButton}>
-            <Text style={styles.iconText}>SET</Text>
+            <Text style={styles.iconText}>NEW</Text>
           </Pressable>
           <View style={styles.wavePill}>
             <Text style={styles.waveTitle}>
@@ -353,27 +401,37 @@ export default function App() {
             </View>
             <Text style={styles.waveName}>{currentWave.name}</Text>
           </View>
-          <View style={styles.gemPill}>
-            <Text style={styles.gemText}>68</Text>
+          <View style={styles.nutsPill}>
+            <Text style={styles.nutsLabel}>NUTS</Text>
+            <Text style={styles.nutsValue}>{coins}</Text>
           </View>
         </View>
 
-        <View style={styles.sideBadge}>
-          <Text style={styles.sideBadgeIcon}>+</Text>
-          <Text style={styles.sideBadgeText}>BUFFS</Text>
+        <View style={styles.machineReadout}>
+          <Text style={styles.machineText}>
+            {currentWave.job} · spin x{machine.production.toFixed(2)}
+            {phase === 'battle' && frost < 1 ? ' · FROST' : ''}
+          </Text>
         </View>
 
-        <View style={[styles.board, { width: boardSize }]}>
+        <View
+          ref={boardRef}
+          {...pan.panHandlers}
+          onLayout={onBoardLayout}
+          style={[styles.board, { width: boardSize }]}
+        >
           {grid.map((rowCells, row) =>
             rowCells.map((gear, col) => {
               const key = `${row}-${col}`
-              const isPowered = powered.has(key)
+              const powered = isCore(row, col) || machine.powered.has(key)
               const data = gear ? gearBook[gear.id] : null
+              const selected = selectedCell?.row === row && selectedCell?.col === col
+              const draggingHere = drag && dragFrom.current?.row === row && dragFrom.current?.col === col
 
               return (
                 <Pressable
                   key={key}
-                  onPress={() => placeOrUpgrade(row, col)}
+                  onPress={() => tapCell(row, col)}
                   style={[
                     styles.socket,
                     {
@@ -381,17 +439,24 @@ export default function App() {
                       height: socketSize,
                       borderRadius: socketSize / 2,
                     },
+                    powered && styles.poweredSocket,
                     isCore(row, col) && styles.coreSocket,
-                    isPowered && styles.poweredSocket,
-                    data && { backgroundColor: data.color },
+                    selected && styles.selectedSocket,
+                    draggingHere && { opacity: 0.2 },
                   ]}
                 >
                   {isCore(row, col) ? (
-                    <Text style={styles.coreText}>CORE</Text>
-                  ) : data ? (
+                    <SpinningGear spinning color="#eed8a3" size={socketSize - 8} speed={spinSpeed} mark="SPIN" />
+                  ) : data && gear ? (
                     <>
-                      <Text style={styles.gearMark}>{data.mark}</Text>
-                      <Text style={styles.levelBadge}>{gear?.level}</Text>
+                      <SpinningGear
+                        spinning={powered}
+                        color={data.color}
+                        size={socketSize - 10}
+                        speed={spinSpeed}
+                        mark={data.mark}
+                      />
+                      <Text style={styles.levelBadge}>r{gear.rank}</Text>
                     </>
                   ) : null}
                 </Pressable>
@@ -405,48 +470,84 @@ export default function App() {
         </View>
 
         <View style={styles.battleGround}>
-          {displayHp.map((hp, lane) => {
-            const hpPercent = Math.max(0, Math.min(100, (hp / currentWave.hp[lane]) * 100))
-            const powerWidth = Math.max(10, Math.min(100, lanes[lane].power * 3.2))
-            return (
-              <View style={styles.laneRow} key={lane}>
-                <View style={[styles.heroUnit, { left: `${Math.min(70, powerWidth / 1.5)}%` }]}>
-                  <Text style={styles.unitText}>{lanes[lane].power > 0 ? 'H' : '-'}</Text>
-                </View>
-                <View style={[styles.enemyUnit, { right: `${100 - hpPercent}%` }]}>
-                  <Text style={styles.unitText}>W</Text>
-                </View>
-                <View style={styles.laneBar}>
-                  <View style={[styles.powerLine, { width: `${powerWidth}%` }]} />
-                  <View style={[styles.enemyLine, { width: `${hpPercent}%` }]} />
-                </View>
-              </View>
-            )
-          })}
+          {[0, 1, 2].map((lane) => (
+            <View style={styles.laneRow} key={lane}>
+              <View style={styles.laneTrack} />
+              {(battle?.fighters ?? [])
+                .filter((unit) => unit.lane === lane)
+                .map((unit) => (
+                  <View
+                    key={unit.id}
+                    style={[
+                      styles.fighter,
+                      {
+                        width: unit.size,
+                        height: unit.size,
+                        borderRadius: unit.size / 3,
+                        left: `${unit.x * 100}%`,
+                        marginLeft: -unit.size / 2,
+                        backgroundColor: unit.color,
+                        borderColor: unit.team === 'player' ? '#1d783b' : '#4b170e',
+                      },
+                    ]}
+                  >
+                    <View style={styles.fighterHp}>
+                      <View style={[styles.fighterHpFill, { width: `${Math.max(8, (unit.hp / unit.maxHp) * 100)}%` }]} />
+                    </View>
+                    <Text style={styles.gearMark}>{unit.mark}</Text>
+                  </View>
+                ))}
+              {(battle?.shots ?? [])
+                .filter((shot) => shot.lane === lane)
+                .map((shot) => (
+                  <View key={shot.id} style={[styles.shot, { left: `${shot.x * 100}%` }]} />
+                ))}
+              {(battle?.floats ?? [])
+                .filter((item) => item.lane === lane)
+                .map((item) => (
+                  <Text key={item.id} style={[styles.floatText, { left: `${item.x * 100}%`, opacity: item.life }]}>
+                    {item.text}
+                  </Text>
+                ))}
+            </View>
+          ))}
         </View>
 
         {phase === 'planning' || phase === 'result' ? (
           <View style={styles.shopPanel}>
             <View style={styles.currencyRow}>
-              <View style={styles.currencyPill}>
-                <Text style={styles.currencyIcon}>O</Text>
-                <Text style={styles.currencyValue}>{coins}</Text>
-              </View>
-              <Text style={styles.phaseText}>{phase === 'result' ? 'Result ready' : 'Build phase'}</Text>
+              <Text style={styles.phaseText}>{phase === 'result' ? 'Result ready' : 'Build the machine'}</Text>
+              <Text style={styles.phaseText}>{unitCount} live units</Text>
             </View>
 
             <View style={styles.cardsRow}>
+              <Pressable
+                onPress={() => {
+                  setPick({ kind: 'cog' })
+                  setSelectedCell(null)
+                }}
+                style={[styles.card, styles.pinnedCard, pick?.kind === 'cog' && styles.selectedCard]}
+              >
+                <View style={[styles.cardGear, { backgroundColor: gearBook.cog.color }]}>
+                  <Text style={styles.cardMark}>{gearBook.cog.mark}</Text>
+                </View>
+                <Text style={styles.cardTitle}>Cog</Text>
+                <Text style={styles.cardDetail}>Always in shop</Text>
+                <View style={styles.costPill}>
+                  <Text style={styles.costText}>{gearBook.cog.cost}</Text>
+                </View>
+              </Pressable>
               {shop.map((gearId, index) => {
                 const data = gearBook[gearId]
+                const selected = pick?.kind === 'unit' && pick.index === index
                 return (
                   <Pressable
                     key={`${gearId}-${index}`}
-                    onPress={() => setSelected(gearId)}
-                    style={[
-                      styles.card,
-                      selected === gearId && styles.selectedCard,
-                      { borderColor: selected === gearId ? data.color : '#0a5cab' },
-                    ]}
+                    onPress={() => {
+                      setPick({ kind: 'unit', index })
+                      setSelectedCell(null)
+                    }}
+                    style={[styles.card, selected && styles.selectedCard, { borderColor: selected ? data.color : '#0a5cab' }]}
                   >
                     <View style={[styles.cardGear, { backgroundColor: data.color }]}>
                       <Text style={styles.cardMark}>{data.mark}</Text>
@@ -462,11 +563,19 @@ export default function App() {
             </View>
 
             <View style={styles.actionRow}>
+              <Pressable
+                onPress={sellSelected}
+                style={[styles.sellButton, !selectedGear && styles.sellDisabled]}
+              >
+                <Text style={styles.actionText}>{selectedGear ? `SELL ${sellValue(selectedGear)}` : 'SELL'}</Text>
+              </Pressable>
               <Pressable onPress={reroll} style={styles.rerollButton}>
-                <Text style={styles.actionText}>Reroll 5</Text>
+                <Text style={styles.actionText}>REROLL 5</Text>
               </Pressable>
               <Pressable onPress={phase === 'result' ? continueRun : fight} style={styles.fightButton}>
-                <Text style={styles.actionText}>{phase === 'result' ? (battle?.won ? 'NEXT' : 'RETRY') : 'FIGHT!'}</Text>
+                <Text style={styles.actionText}>
+                  {phase === 'result' ? (battle?.won ? 'NEXT' : 'RETRY') : 'FIGHT'}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -474,11 +583,11 @@ export default function App() {
 
         {phase === 'victory' || phase === 'defeat' ? (
           <View style={styles.endPanel}>
-            <Text style={styles.endTitle}>{phase === 'victory' ? 'Mission Clear!' : 'Try Again'}</Text>
+            <Text style={styles.endTitle}>{phase === 'victory' ? 'Machine Holds' : 'Line Broke'}</Text>
             <Text style={styles.endCopy}>
               {phase === 'victory'
-                ? 'The placeholder build cleared all five waves.'
-                : 'The wolves broke the line. Restart and cluster attack gears around boosters.'}
+                ? 'Five jobs cleared. Merge Cogs, mix lanes, and the spinner carries the fight.'
+                : failHint(wave, battle?.leaks ?? 0, machine.production, unitCount)}
             </Text>
             <Pressable onPress={reset} style={styles.fightButton}>
               <Text style={styles.actionText}>NEW RUN</Text>
@@ -487,14 +596,37 @@ export default function App() {
         ) : null}
       </ScrollView>
 
+      {drag ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.ghost,
+            {
+              left: drag.x,
+              top: drag.y,
+              width: socketSize,
+              height: socketSize,
+            },
+          ]}
+        >
+          <SpinningGear
+            spinning
+            color={gearBook[drag.gear.id].color}
+            size={socketSize - 8}
+            speed={2}
+            mark={gearBook[drag.gear.id].mark}
+          />
+        </View>
+      ) : null}
+
       <View style={styles.bottomHud}>
         <View style={styles.lifePill}>
           <Text style={styles.lifeIcon}>HP</Text>
-          <Text style={styles.lifeText}>{lives}</Text>
+          <Text style={styles.lifeText}>{Math.max(0, lives - (phase === 'battle' ? battle?.leaks ?? 0 : 0))}</Text>
         </View>
         <View style={styles.skullPill}>
           <Text style={styles.lifeIcon}>KO</Text>
-          <Text style={styles.lifeText}>{defeated}</Text>
+          <Text style={styles.lifeText}>{defeated + (phase === 'battle' ? battle?.kills ?? 0 : 0)}</Text>
         </View>
       </View>
     </SafeAreaView>
